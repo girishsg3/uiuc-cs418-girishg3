@@ -33,11 +33,25 @@ uniform mat3 uNormalMatrix;
 uniform mat4 uProjectionMatrix;
 
 out vec2 vTexCoord;
-out vec3 vNormal;
+out vec3 vNormal, vPosition;
+out vec4 vModelViewPosition;
+
+//out vec3 vVertexPosition;
+out vec3 n, l, v, p;
 
 void main() {
   vTexCoord.s = aVertexPosition.x + 0.5;
   vTexCoord.t = aVertexPosition.y + 0.5;
+
+  vPosition = aVertexPosition;
+  vNormal = uNormalMatrix * aVertexNormal;
+
+  // Compute unit normal, vertex position, light vector and
+  // view vector in viewing coordinates 
+  n = normalize(vNormal);
+  l = normalize(vec3(2.5, 2.45, 4.5));
+  vec4 p = uModelViewMatrix*vec4(aVertexPosition, 1.0);
+  v = normalize(-p.xyz);
 
   gl_Position = uProjectionMatrix*uModelViewMatrix*vec4(aVertexPosition, 1.0);
 }
@@ -51,7 +65,8 @@ var fs = `#version 300 es
 
 precision mediump float;
     
-in vec3 vNormal;
+in vec3 vNormal, vPosition, n, l, v, p;
+in vec4 vModelViewPosition;
 in vec2 vTexCoord;
 uniform sampler2D uSampler;
 uniform sampler2D uSampler2;
@@ -59,11 +74,54 @@ uniform sampler2D uSampler2;
 out vec4 outColor;
     
 void main() {
-  vec3 illinois = vec3(texture(uSampler, vTexCoord));
-  vec3 stadium = vec3(texture(uSampler2, vTexCoord));
-  vec3 c = 0.5*illinois + 0.5*stadium;
+  // Hard code fine tuned for diffuse and specular constants
+  float kd = 0.5; 
+  float ks = 0.2;
+  // Hard code fine tuned gleam constant
+  float phongGleam = 20.0;
+  // Light sources for Light coming in from the source and the ambient condition
+  vec3 Lightin = vec3(1.0, 1.0, 1.0);
+  vec3 ambientLight = vec3(1.0, 1.0, 1.0);
 
-  outColor = vec4(c,1.0);
+  // re-normalize vectors
+  vec3 normalize_n = normalize(n);
+  vec3 normalize_l = normalize(l);
+  vec3 normalize_v = normalize(v);
+  vec3 normalize_vNormal = normalize(vNormal);
+
+  // Apply Cylindrical Mapping for Illinois Logo
+  vec2 IlliTexCoor;
+  IlliTexCoor.s = 1.0 - atan(vPosition.z, vPosition.x)/radians(360.0);
+  IlliTexCoor.t = 2.0 * (vPosition.y) + 0.5;
+  vec4 illinois = texture(uSampler, IlliTexCoor);
+
+  // Convert surface normal to texture coordinates for stadium
+  vec2 stadiumTexCoord;
+  stadiumTexCoord.s = (vNormal.x + 1.0) / 2.0;
+  stadiumTexCoord.t = (vNormal.y + 1.0) / 2.0;
+  vec4 stadium = texture(uSampler2, stadiumTexCoord);
+
+  vec4 c = illinois + stadium;
+
+  // Incident light direction is in the opposite direction of l and opposite of the reflect
+  //vec3 r = reflect(-normalize_l, normalize_n); 
+
+  // Apply Lambertian diffuse with light source setup
+  vec3 diffuseLightIn = vec3(1.0,0.0,4.0);
+  vec3 diffuseLightDir = normalize(diffuseLightIn - p);
+  vec3 lambertianDiffuse = 0.1 * ambientLight + kd * Lightin * max(dot(normalize_n, diffuseLightDir), 0.0);
+
+  // Apply Phong's Specular Reflection with light source setup
+  vec3 specularLightin = vec3(2.0, 0.0, 3.0);
+  vec3 specularLightDir = normalize(specularLightin - p);
+  vec3 r = reflect(-specularLightDir, normalize_vNormal);
+  vec3 phongSpecular = ks * Lightin * pow(max(dot(normalize_v, r), 0.0), phongGleam);
+
+  // Final sum-up diffuse and specular to generate phong shadding
+  vec3 phongShading = illinois.rgb * stadium.rgb * lambertianDiffuse + phongSpecular;
+
+
+  outColor = vec4(phongShading * c.rgb, 1.0);
 }
 `;
 
@@ -153,7 +211,7 @@ function initwebgl() {
                 gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 255, 255]));
 
   var image = new Image();
-  image.src = "illinois512.png";
+  image.src = "illinois512-noborder.png";
 
   image.addEventListener("load", function() {
     gl.bindTexture(gl.TEXTURE_2D, texture);
